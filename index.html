@@ -209,7 +209,7 @@
 
       <!-- OVERVIEW -->
       <div class="tab-content active" id="tab-overview">
-        <div class="section-label">Key metrics · computed from SLA Target vs. actual/elapsed days · reflects sidebar filters</div>
+        <div class="section-label" title="Computed from SLA Target vs. actual/elapsed days. Reflects sidebar filters.">Key metrics</div>
         <div class="cards-row" id="kpiCards"></div>
 
         <div class="section-label">Additional insights</div>
@@ -480,12 +480,12 @@ function slaColorClass(pct){
 function renderKPICards(rows){
   const s = computeStats(rows);
   const items = [
-    {label:'Total Requests', value: s.total, cls:'c-blue', sub:'Submitted (has a received date)'},
-    {label:'Closed Tasks', value: s.closed, cls:'c-green', sub:'Status = Closed'},
-    {label:'SLA Compliance', value: fmtPct(s.slaCompliancePct), cls: slaColorClass(s.slaCompliancePct), sub: s.closedDecided+' closed w/ target · '+s.met+' met'},
-    {label:'In Progress', value: s.inProgress, cls:'c-gold', sub: s.ongoing ? s.ongoing+' more Ongoing' : 'Currently active'},
-    {label:'SLA Breached', value: s.totalBreaches, cls:'c-red', sub: s.breached+' closed late · '+s.overdue+' open overdue'},
-    {label:'Avg Resolution', value: fmtDays(s.avgResolution), cls:'c-purple', sub: 'Mean, closed requests'}
+    {label:'Total Requests', value: s.total, cls:'c-blue', sub:'All-time'},
+    {label:'Closed Tasks', value: s.closed, cls:'c-green', sub:'Closed'},
+    {label:'SLA Compliance', value: fmtPct(s.slaCompliancePct), cls: slaColorClass(s.slaCompliancePct), sub: s.met+'/'+s.closedDecided+' met'},
+    {label:'In Progress', value: s.inProgress, cls:'c-gold', sub: s.ongoing ? '+'+s.ongoing+' ongoing' : 'Active now'},
+    {label:'SLA Breached', value: s.totalBreaches, cls:'c-red', sub: s.breached+' late · '+s.overdue+' overdue'},
+    {label:'Avg Resolution', value: fmtDays(s.avgResolution), cls:'c-purple', sub: 'Days to close'}
   ];
   document.getElementById('kpiCards').innerHTML = items.map(i=>
     `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div><div class="sub">${i.sub}</div></div>`
@@ -535,10 +535,10 @@ function computeInsights(rows, stats){
 function renderInsightCards(rows, stats){
   const ins = computeInsights(rows, stats);
   const items = [
-    {label:'New (last 30 days)', value: ins.last30, cls:'c-blue', sub:'Requests received'},
-    {label:'Median resolution', value: ins.med!==null ? ins.med+' days' : '—', cls:'c-teal', sub:'Closed requests'},
-    {label:'Longest open request', value: ins.longest ? ins.longest.days+' days' : '—', cls:'c-red', sub: ins.longest ? (ins.longest.id+' · '+(ins.longest.desc||'').slice(0,28)) : 'No open items'},
-    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-gold', sub: ins.topTag ? (ins.topTagN+' flagged requests') : 'No breaches'}
+    {label:'New (30 days)', value: ins.last30, cls:'c-blue', sub:'Received'},
+    {label:'Median resolution', value: ins.med!==null ? ins.med+' days' : '—', cls:'c-teal', sub:'Closed'},
+    {label:'Longest open', value: ins.longest ? ins.longest.days+' days' : '—', cls:'c-red', sub: ins.longest ? ins.longest.id : 'None open'},
+    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-gold', sub: ins.topTag ? (ins.topTagN+' requests') : 'No breaches'}
   ];
   document.getElementById('insightCards').innerHTML = items.map(i=>
     `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value" style="font-size:20px;">${i.value}</div><div class="sub">${i.sub}</div></div>`
@@ -549,10 +549,10 @@ function renderInsightCards(rows, stats){
 function renderSLACards(rows, stats){
   const ins = computeInsights(rows, stats);
   const items = [
-    {label:'Open & unresolved', value: stats.inProgress + stats.ongoing, cls:'c-gold', sub:'In Progress / Ongoing'},
-    {label:'Open & overdue', value: stats.overdue, cls:'c-red', sub:'Past SLA target, still open'},
-    {label:'Closed late', value: stats.breached, cls:'c-red', sub:'Missed target before closing'},
-    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-purple', sub: ins.topTag ? (ins.topTagN+' occurrences') : '—'}
+    {label:'Open & unresolved', value: stats.inProgress + stats.ongoing, cls:'c-gold', sub:'Active'},
+    {label:'Open & overdue', value: stats.overdue, cls:'c-red', sub:'Past target'},
+    {label:'Closed late', value: stats.breached, cls:'c-red', sub:'Missed target'},
+    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-purple', sub: ins.topTag ? (ins.topTagN+'x') : '—'}
   ];
   document.getElementById('slaCards').innerHTML = items.map(i=>
     `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value" style="font-size:20px;">${i.value}</div><div class="sub">${i.sub}</div></div>`
