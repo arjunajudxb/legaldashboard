@@ -142,7 +142,7 @@
       <div class="mark">⚖️</div>
       <div>
         <div class="name">Legal Team</div>
-        <div class="sub">ITCAN · KPI &amp; SLA Tracker</div>
+        <div class="sub">MoonTech · KPI &amp; SLA Tracker</div>
       </div>
     </div>
 
@@ -365,7 +365,15 @@ function parseSheetContent(csvText){
 }
 
 async function fetchLiveData(){
-  const res = await fetch(CSV_URL, { cache: 'no-store' });
+  if(location.protocol === 'file:'){
+    throw new Error('This page is open as a local file (file://). Google Sheets blocks live fetches from local files for security reasons -- deploy this file to GitHub Pages (or any http(s) server) and the live data will load automatically.');
+  }
+  let res;
+  try{
+    res = await fetch(CSV_URL, { cache: 'no-store' });
+  }catch(networkErr){
+    throw new Error('Network request to Google Sheets was blocked. This can happen if this page isn\'t served over http(s) yet, or a browser extension (ad blocker / privacy tool) is blocking the request. Original error: ' + networkErr.message);
+  }
   if(!res.ok) throw new Error('Sheet request failed (HTTP '+res.status+'). Is the sheet still shared as "Anyone with the link"?');
   const text = await res.text();
   if(!text) throw new Error('The sheet returned no content.');
