@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<!--
+  Legal Team KPI Dashboard — GitHub Pages build
+  ------------------------------------------------
+  This version fetches the Google Sheet's public CSV export directly from the
+  browser (no backend, no Cowork bridge). It works as a static file on GitHub
+  Pages as long as the sheet stays shared as "Anyone with the link – Viewer".
+
+  Deploy:
+    1. Push this file (as index.html) to a GitHub repo.
+    2. Repo Settings -> Pages -> Deploy from branch -> pick the branch/folder
+       this file lives in.
+    3. Open the published URL. Every page load (and every click of Refresh)
+       re-fetches the current sheet contents.
+
+  If the sheet's sharing is ever changed to private, the CSV fetch below will
+  fail and the dashboard will show a connection error until it's re-shared.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Legal Team KPI Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gridjs@5.0.2/dist/gridjs.umd.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridjs@5.0.2/dist/theme/mermaid.min.css">
+<style>
+  :root{ color-scheme: dark; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#0a0c16;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,Helvetica,Arial,sans-serif;color:#e7e9f5;}
+  #app{display:flex;min-height:100vh;background:#0a0c16;}
+
+  /* ---------- Sidebar ---------- */
+  #sidebar{width:236px;flex:0 0 236px;background:#0c0e1c;border-right:1px solid #1c2036;padding:20px 16px;display:flex;flex-direction:column;gap:22px;}
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand .mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#34d399,#2563eb);display:flex;align-items:center;justify-content:center;font-size:17px;flex:0 0 36px;}
+  .brand .name{font-weight:700;font-size:14.5px;line-height:1.2;}
+  .brand .sub{font-size:11.5px;color:#8b90b3;}
+  .nav-label{font-size:10.5px;letter-spacing:.08em;color:#5b6086;font-weight:700;text-transform:uppercase;margin:0 0 6px 4px;}
+  .nav{display:flex;flex-direction:column;gap:2px;}
+  .nav-item{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;font-size:13.5px;color:#aeb2cf;cursor:pointer;user-select:none;border:1px solid transparent;}
+  .nav-item:hover{background:#12162a;}
+  .nav-item.active{background:#12271f;color:#4ade80;border-color:#1c3a2c;font-weight:600;}
+  .nav-item .dot{width:6px;height:6px;border-radius:50%;background:#5b6086;}
+  .nav-item.active .dot{background:#4ade80;}
+
+  .filters{display:flex;flex-direction:column;gap:14px;}
+  .f-group label{display:block;font-size:10.5px;letter-spacing:.07em;color:#5b6086;font-weight:700;text-transform:uppercase;margin-bottom:6px;}
+  select, .date-input{width:100%;background:#12152a;border:1px solid #262b47;color:#e7e9f5;font-size:13px;padding:8px 10px;border-radius:8px;outline:none;appearance:none;}
+  select:focus{border-color:#3a4270;}
+  .sidebar-foot{margin-top:auto;font-size:11px;color:#4b5077;padding-top:10px;border-top:1px solid #1c2036;}
+  .sidebar-foot a{color:#60a5fa;text-decoration:none;}
+
+  /* ---------- Main ---------- */
+  #main{flex:1;min-width:0;padding:22px 28px 50px;}
+  .topbar{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
+  .topbar h1{margin:0;font-size:21px;font-weight:700;}
+  .topbar .meta{font-size:12.5px;color:#8b90b3;margin-top:3px;}
+  .topbar .meta .live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-right:5px;box-shadow:0 0 0 3px rgba(74,222,128,.15);}
+  .top-actions{display:flex;align-items:center;gap:8px;}
+  .btn{background:#12152a;border:1px solid #262b47;color:#e7e9f5;font-size:12.5px;padding:8px 13px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;}
+  .btn:hover{background:#171b34;}
+  .badge-live{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#4ade80;background:#12271f;border:1px solid #1c3a2c;padding:7px 11px;border-radius:8px;}
+  .badge-live .dot{width:6px;height:6px;border-radius:50%;background:#4ade80;}
+
+  .section-label{font-size:11px;letter-spacing:.08em;color:#5b6086;font-weight:700;text-transform:uppercase;margin:26px 0 10px 2px;}
+  .section-label:first-of-type{margin-top:4px;}
+
+  .cards-row{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;}
+  .cards-row.small{grid-template-columns:repeat(4,1fr);}
+  .card{background:#111428;border:1px solid #1e2340;border-radius:12px;padding:14px 15px;border-top:3px solid #333a5c;min-width:0;}
+  .card .label{font-size:10.5px;letter-spacing:.06em;color:#8b90b3;text-transform:uppercase;font-weight:700;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .card .value{font-size:26px;font-weight:800;line-height:1;}
+  .card .sub{font-size:11px;color:#5b6086;margin-top:6px;}
+  .card.c-blue{border-top-color:#60a5fa;} .card.c-blue .value{color:#93c5fd;}
+  .card.c-green{border-top-color:#34d399;} .card.c-green .value{color:#6ee7b7;}
+  .card.c-gold{border-top-color:#fbbf24;} .card.c-gold .value{color:#fde68a;}
+  .card.c-red{border-top-color:#f87171;} .card.c-red .value{color:#fca5a5;}
+  .card.c-purple{border-top-color:#a78bfa;} .card.c-purple .value{color:#c4b5fd;}
+  .card.c-teal{border-top-color:#2dd4bf;} .card.c-teal .value{color:#5eead4;}
+
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+  .grid-2{display:grid;grid-template-columns:2fr 1fr;gap:14px;}
+  .panel{background:#111428;border:1px solid #1e2340;border-radius:12px;padding:16px;min-width:0;}
+  .panel h3{margin:0 0 4px;font-size:12px;letter-spacing:.05em;color:#aeb2cf;text-transform:uppercase;font-weight:700;}
+  .panel .hint{font-size:11px;color:#4b5077;margin-bottom:10px;}
+  .chart-wrap{position:relative;height:230px;}
+  .chart-wrap.tall{height:290px;}
+
+  table.mini{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px;}
+  table.mini th{text-align:left;font-size:10.5px;letter-spacing:.05em;color:#5b6086;text-transform:uppercase;font-weight:700;padding:6px 8px;border-bottom:1px solid #232842;}
+  table.mini td{padding:7px 8px;border-bottom:1px solid #171a30;color:#d6d9ef;}
+  table.mini tr:last-child td{border-bottom:none;}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;}
+  .pill-green{background:#0f2a1e;color:#4ade80;border:1px solid #1c3a2c;}
+  .pill-red{background:#2a1414;color:#f87171;border:1px solid #3a1c1c;}
+  .pill-gold{background:#2a2110;color:#fbbf24;border:1px solid #3a2f1c;}
+  .pill-gray{background:#1a1e35;color:#9aa0c8;border:1px solid #262b47;}
+  .pill-blue{background:#101d33;color:#60a5fa;border:1px solid #1c2c47;}
+  .pill-purple{background:#1e1833;color:#a78bfa;border:1px solid #2c2247;}
+
+  .tab-content{display:none;}
+  .tab-content.active{display:block;}
+
+  .filter-toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .filter-toolbar select{width:auto;min-width:150px;}
+
+  #trackerGrid .gridjs-wrapper, #slaGrid .gridjs-wrapper{border:1px solid #1e2340;border-radius:12px;overflow:hidden;}
+  .gridjs-table{width:100%!important;background:#111428;color:#d6d9ef;font-size:12.5px;}
+  th.gridjs-th{background:#141833!important;color:#8b90b3!important;font-size:10.5px!important;text-transform:uppercase;letter-spacing:.05em;border-color:#232842!important;}
+  td.gridjs-td{border-color:#171a30!important;background:#111428!important;}
+  .gridjs-search-input{background:#12152a!important;border:1px solid #262b47!important;color:#e7e9f5!important;border-radius:8px!important;}
+  .gridjs-pagination{background:transparent!important;color:#8b90b3!important;border:none!important;}
+  .gridjs-pagination .gridjs-pages button{background:#12152a!important;color:#c7cae6!important;border-color:#262b47!important;}
+  .gridjs-pagination .gridjs-pages button:disabled{color:#4b5077!important;}
+  .gridjs-footer{background:transparent!important;border:none!important;}
+  .gridjs-container{color:#d6d9ef;}
+  .gridjs-tr:hover td{background:#151934!important;}
+
+  .loading-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:100px 0;color:#8b90b3;gap:14px;}
+  .spinner{width:34px;height:34px;border-radius:50%;border:3px solid #232842;border-top-color:#4ade80;animation:spin 0.9s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .error-banner{background:#2a1414;border:1px solid #4a2222;color:#fca5a5;padding:12px 16px;border-radius:10px;font-size:13px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .error-banner .btn{border-color:#4a2222;}
+
+  ::-webkit-scrollbar{width:8px;height:8px;}
+  ::-webkit-scrollbar-thumb{background:#232842;border-radius:8px;}
+
+  @media(max-width:1200px){
+    .cards-row{grid-template-columns:repeat(3,1fr);}
+    .cards-row.small{grid-template-columns:repeat(2,1fr);}
+    .grid-3{grid-template-columns:1fr;}
+    .grid-2{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="sidebar">
+    <div class="brand">
+      <div class="mark">⚖️</div>
+      <div>
+        <div class="name">Legal Team</div>
+        <div class="sub">ITCAN · KPI &amp; SLA Tracker</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="nav-label">Reports</div>
+      <div class="nav">
+        <div class="nav-item active" data-tab="overview"><span class="dot"></span>Overview</div>
+        <div class="nav-item" data-tab="tracker"><span class="dot"></span>Request Tracker</div>
+        <div class="nav-item" data-tab="sla"><span class="dot"></span>SLA &amp; Delays</div>
+      </div>
+    </div>
+
+    <div class="filters">
+      <div class="nav-label">Filters</div>
+      <div class="f-group">
+        <label>Requester</label>
+        <select id="f-requester"><option value="">All requesters</option></select>
+      </div>
+      <div class="f-group">
+        <label>Priority</label>
+        <select id="f-priority"><option value="">All priorities</option></select>
+      </div>
+      <div class="f-group">
+        <label>Category</label>
+        <select id="f-category"><option value="">All categories</option></select>
+      </div>
+      <div class="f-group">
+        <label>Status</label>
+        <select id="f-status"><option value="">All statuses</option></select>
+      </div>
+      <div class="f-group">
+        <label>Date received</label>
+        <select id="f-daterange">
+          <option value="all">All time</option>
+          <option value="30">Last 30 days</option>
+          <option value="60">Last 60 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="sidebar-foot">
+      Synced from <a id="sheet-link" href="#" target="_blank" rel="noopener">Legal_KPI_SLA_Tracker_2026</a><br>
+      Live CSV fetch · needs "Anyone with link" sharing
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="topbar">
+      <div>
+        <h1>Legal Team KPI Dashboard</h1>
+        <div class="meta"><span class="live-dot"></span><span id="meta-text">Connecting to Google Sheets…</span></div>
+      </div>
+      <div class="top-actions">
+        <button class="btn" id="refreshBtn">↻ Refresh</button>
+        <div class="badge-live"><span class="dot"></span>LIVE</div>
+      </div>
+    </div>
+
+    <div id="errorHost"></div>
+    <div id="loadingHost" class="loading-state"><div class="spinner"></div><div>Fetching live data from Google Sheets…</div></div>
+
+    <div id="content" style="display:none;">
+
+      <!-- OVERVIEW -->
+      <div class="tab-content active" id="tab-overview">
+        <div class="section-label">Key metrics · computed from SLA Target vs. actual/elapsed days · reflects sidebar filters</div>
+        <div class="cards-row" id="kpiCards"></div>
+
+        <div class="section-label">Additional insights</div>
+        <div class="cards-row small" id="insightCards"></div>
+
+        <div class="section-label">Pipeline breakdown</div>
+        <div class="grid-3">
+          <div class="panel">
+            <h3>Status breakdown</h3>
+            <div class="hint">All submitted requests, by current status</div>
+            <div class="chart-wrap"><canvas id="chartStatus"></canvas></div>
+          </div>
+          <div class="panel">
+            <h3>Priority mix</h3>
+            <div class="hint">Share of requests by priority level</div>
+            <div class="chart-wrap"><canvas id="chartPriority"></canvas></div>
+          </div>
+          <div class="panel">
+            <h3>Requests by category</h3>
+            <div class="hint">Task category volume</div>
+            <div class="chart-wrap"><canvas id="chartCategory"></canvas></div>
+          </div>
+        </div>
+
+        <div class="section-label">Scorecards</div>
+        <div class="grid-3">
+          <div class="panel">
+            <h3>Priority breakdown</h3>
+            <table class="mini" id="tblPriority"></table>
+          </div>
+          <div class="panel">
+            <h3>Task category breakdown</h3>
+            <table class="mini" id="tblCategory"></table>
+          </div>
+          <div class="panel">
+            <h3>Requester volume</h3>
+            <table class="mini" id="tblRequester"></table>
+          </div>
+        </div>
+
+        <div class="section-label">Trend</div>
+        <div class="panel">
+          <h3>Requests received vs. completed, by month</h3>
+          <div class="chart-wrap tall"><canvas id="chartTrend"></canvas></div>
+        </div>
+      </div>
+
+      <!-- TRACKER -->
+      <div class="tab-content" id="tab-tracker">
+        <div class="section-label">Request tracker</div>
+        <div class="panel">
+          <h3>All requests</h3>
+          <div class="hint">Filters in the sidebar apply here. Click a column header to sort, or use the search box.</div>
+          <div id="trackerGrid"></div>
+        </div>
+      </div>
+
+      <!-- SLA -->
+      <div class="tab-content" id="tab-sla">
+        <div class="section-label">SLA health</div>
+        <div class="cards-row small" id="slaCards"></div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <h3>At-risk / SLA-breached requests</h3>
+            <div class="hint">Closed late, or currently open past the SLA target</div>
+            <div id="slaGrid"></div>
+          </div>
+          <div class="panel">
+            <h3>Delay reasons</h3>
+            <div class="hint">Most common delay tags among breached requests</div>
+            <div class="chart-wrap tall"><canvas id="chartDelay"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+ * DATA SOURCE
+ * Set this to your own Google Sheet ID if you copy this dashboard.
+ * The sheet must be shared as "Anyone with the link -> Viewer" (File > Share)
+ * for the public CSV export below to work from a static page.
+ * ========================================================================= */
+const SHEET_ID = '1ROszElWcuqvVBha4Len3JjAHTm-eZ6RQ6LWmywL852c';
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:csv';
+document.getElementById('sheet-link').href = 'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/edit';
+
+const PALETTE = ['#60a5fa','#34d399','#fbbf24','#a78bfa','#f87171','#2dd4bf','#f472b6','#818cf8','#facc15','#4ade80'];
+Chart.defaults.color = '#8b90b3';
+Chart.defaults.borderColor = '#1e2340';
+Chart.defaults.font.family = "-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif";
+
+let ALL_ROWS = [];
+let charts = {};
+let grid = null, slaGridInstance = null;
+
+function parseDDMMYYYY(s){
+  if(!s) return null;
+  const m = s.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(!m) return null;
+  const d = new Date(+m[3], +m[2]-1, +m[1]);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* ---------------------------------------------------------------------
+ * CSV parsing (RFC4180-ish): handles quoted fields with embedded commas,
+ * embedded newlines (several of this sheet's headers wrap across lines
+ * inside a quoted cell) and doubled "" escaped quotes.
+ * ------------------------------------------------------------------- */
+function parseCSV(text){
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for(let i=0;i<text.length;i++){
+    const c = text[i];
+    if(inQuotes){
+      if(c === '"'){
+        if(text[i+1] === '"'){ field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else {
+      if(c === '"') inQuotes = true;
+      else if(c === ','){ row.push(field); field=''; }
+      else if(c === '\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(c === '\r'){ /* skip; \n terminates the row */ }
+      else field += c;
+    }
+  }
+  if(field.length || row.length){ row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Column order in the Tracker sheet (0-indexed):
+// 0 Task ID, 1 Date Received, 2 Date Completed, 3 Requester/Dept, 4 Task Category,
+// 5 Task Description, 6 Priority, 7 Status, 8 SLA Target, 9 Days to Complete,
+// 10 Within SLA?, 11 Delay Tag/Code, 12 Notes
+function parseSheetContent(csvText){
+  const table = parseCSV(csvText);
+  const rows = table.slice(1) // skip header row
+    .map(r => ({
+      id: (r[0]||'').trim(), received: (r[1]||'').trim(), completed: (r[2]||'').trim(),
+      requester: (r[3]||'').trim(), category: (r[4]||'').trim(), description: (r[5]||'').trim(),
+      priority: (r[6]||'').trim(), status: (r[7]||'').trim(), slaTarget: (r[8]||'').trim(),
+      daysToComplete: (r[9]||'').trim(), withinSLA: (r[10]||'').trim(), delayTag: (r[11]||'').trim(),
+      notes: (r[12]||'').trim()
+    }))
+    .filter(r => r.id.startsWith('LEG-'));
+  const realRows = rows.filter(r => r.received && r.received.length>0);
+  return { realRows };
+}
+
+async function fetchLiveData(){
+  const res = await fetch(CSV_URL, { cache: 'no-store' });
+  if(!res.ok) throw new Error('Sheet request failed (HTTP '+res.status+'). Is the sheet still shared as "Anyone with the link"?');
+  const text = await res.text();
+  if(!text) throw new Error('The sheet returned no content.');
+  return parseSheetContent(text);
+}
+
+/* ---------------------------------------------------------------------
+ * SLA engine
+ * A request's SLA state is derived from its own SLA Target column:
+ *   - Closed request:  met      = Days to Complete <= SLA Target
+ *                       breached = Days to Complete >  SLA Target
+ *   - Open request (In Progress / Ongoing): compared against days elapsed
+ *     since Date Received, as of "now":
+ *                       on-track = elapsed <= SLA Target
+ *                       overdue  = elapsed >  SLA Target
+ *   - No usable SLA Target (or no Days to Complete for a closed item): n/a
+ * ------------------------------------------------------------------- */
+function slaStateForRow(row, now){
+  const target = parseFloat(row.slaTarget);
+  const hasTarget = !isNaN(target);
+  const status = (row.status||'').toLowerCase();
+  const isClosed = status === 'closed';
+  if(isClosed){
+    const days = parseFloat(row.daysToComplete);
+    if(hasTarget && !isNaN(days)) return days <= target ? 'met' : 'breached';
+    return 'na';
+  }
+  if(status === 'in progress' || status === 'ongoing'){
+    const rd = parseDDMMYYYY(row.received);
+    if(hasTarget && rd){
+      const elapsed = daysBetween(rd, now);
+      return elapsed <= target ? 'on-track' : 'overdue';
+    }
+    return 'na';
+  }
+  return 'na';
+}
+
+function slaStateLabel(state){
+  return { met:'Met SLA', breached:'Breached', 'on-track':'On track', overdue:'Overdue', na:'N/A' }[state] || 'N/A';
+}
+
+function computeStats(rows){
+  const now = new Date();
+  let closed=0, inProgress=0, ongoing=0, other=0;
+  let met=0, breached=0, onTrack=0, overdue=0;
+  const closedDaysList = [];
+  rows.forEach(r=>{
+    const status = (r.status||'').toLowerCase();
+    if(status==='closed') closed++;
+    else if(status==='in progress') inProgress++;
+    else if(status==='ongoing') ongoing++;
+    else other++;
+
+    const state = slaStateForRow(r, now);
+    r._slaState = state; // cache for table rendering
+    if(state==='met') met++;
+    else if(state==='breached') breached++;
+    else if(state==='on-track') onTrack++;
+    else if(state==='overdue') overdue++;
+
+    const d = parseFloat(r.daysToComplete);
+    if(status==='closed' && !isNaN(d)) closedDaysList.push(d);
+  });
+  const closedDecided = met + breached;
+  const slaCompliancePct = closedDecided ? (met/closedDecided*100) : null;
+  const avgResolution = closedDaysList.length ? (closedDaysList.reduce((a,b)=>a+b,0)/closedDaysList.length) : null;
+  const totalBreaches = breached + overdue; // ever-late (closed) + currently overdue (open)
+  return {
+    total: rows.length, closed, inProgress, ongoing, other,
+    met, breached, onTrack, overdue, closedDecided,
+    slaCompliancePct, avgResolution, totalBreaches
+  };
+}
+
+function groupBy(rows, field){
+  const groups = {};
+  rows.forEach(r=>{
+    const key = (r[field]||'').trim() || 'Unspecified';
+    (groups[key] = groups[key] || []).push(r);
+  });
+  return Object.keys(groups).sort().map(key=>({ label:key, ...computeStats(groups[key]) }));
+}
+
+function daysBetween(a,b){ return Math.round((b-a)/86400000); }
+
+function median(nums){
+  if(!nums.length) return null;
+  const s = [...nums].sort((a,b)=>a-b);
+  const mid = Math.floor(s.length/2);
+  return s.length % 2 ? s[mid] : (s[mid-1]+s[mid])/2;
+}
+
+function fmtPct(v){ return v===null ? '—' : v.toFixed(1)+'%'; }
+function fmtDays(v){ return v===null ? '—' : (Math.round(v*10)/10)+' days'; }
+
+function slaColorClass(pct){
+  if(pct===null || isNaN(pct)) return 'c-teal';
+  if(pct >= 85) return 'c-green';
+  if(pct >= 65) return 'c-gold';
+  return 'c-red';
+}
+
+function renderKPICards(rows){
+  const s = computeStats(rows);
+  const items = [
+    {label:'Total Requests', value: s.total, cls:'c-blue', sub:'Submitted (has a received date)'},
+    {label:'Closed Tasks', value: s.closed, cls:'c-green', sub:'Status = Closed'},
+    {label:'SLA Compliance', value: fmtPct(s.slaCompliancePct), cls: slaColorClass(s.slaCompliancePct), sub: s.closedDecided+' closed w/ target · '+s.met+' met'},
+    {label:'In Progress', value: s.inProgress, cls:'c-gold', sub: s.ongoing ? s.ongoing+' more Ongoing' : 'Currently active'},
+    {label:'SLA Breached', value: s.totalBreaches, cls:'c-red', sub: s.breached+' closed late · '+s.overdue+' open overdue'},
+    {label:'Avg Resolution', value: fmtDays(s.avgResolution), cls:'c-purple', sub: 'Mean, closed requests'}
+  ];
+  document.getElementById('kpiCards').innerHTML = items.map(i=>
+    `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value">${i.value}</div><div class="sub">${i.sub}</div></div>`
+  ).join('');
+  return s;
+}
+
+function computeInsights(rows, stats){
+  const now = new Date();
+  const last30 = rows.filter(r=>{
+    const d = parseDDMMYYYY(r.received);
+    return d && daysBetween(d, now) <= 30 && daysBetween(d, now) >= 0;
+  }).length;
+
+  const closedDays = rows
+    .filter(r => (r.status||'').toLowerCase()==='closed' && r.daysToComplete !== '' && !isNaN(+r.daysToComplete))
+    .map(r => +r.daysToComplete);
+  const med = median(closedDays);
+
+  const openRows = rows.filter(r => ['in progress','ongoing'].includes((r.status||'').toLowerCase()));
+  let longest = null;
+  openRows.forEach(r=>{
+    const d = parseDDMMYYYY(r.received);
+    if(!d) return;
+    const days = daysBetween(d, now);
+    if(!longest || days > longest.days) longest = {days, id:r.id, desc:r.description};
+  });
+
+  // Delay-tag tally, scoped to requests our own SLA engine actually flags as
+  // breached (closed-late) or overdue (still open past target) -- not the sheet's
+  // raw "Within SLA?" text.
+  const flagged = rows.filter(r => r._slaState==='breached' || r._slaState==='overdue');
+  const tagCount = {};
+  flagged.forEach(r=>{
+    (r.delayTag||'').split(',').map(s=>s.trim()).filter(Boolean).forEach(tag=>{
+      tagCount[tag] = (tagCount[tag]||0)+1;
+    });
+  });
+  let topTag = null, topTagN = 0;
+  Object.entries(tagCount).forEach(([k,v])=>{ if(v>topTagN){topTagN=v; topTag=k;} });
+
+  const uniqueRequesters = new Set(rows.map(r=>r.requester).filter(Boolean)).size;
+
+  return { last30, med, longest, uniqueRequesters, topTag, topTagN, tagCount, flaggedCount: flagged.length };
+}
+
+function renderInsightCards(rows, stats){
+  const ins = computeInsights(rows, stats);
+  const items = [
+    {label:'New (last 30 days)', value: ins.last30, cls:'c-blue', sub:'Requests received'},
+    {label:'Median resolution', value: ins.med!==null ? ins.med+' days' : '—', cls:'c-teal', sub:'Closed requests'},
+    {label:'Longest open request', value: ins.longest ? ins.longest.days+' days' : '—', cls:'c-red', sub: ins.longest ? (ins.longest.id+' · '+(ins.longest.desc||'').slice(0,28)) : 'No open items'},
+    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-gold', sub: ins.topTag ? (ins.topTagN+' flagged requests') : 'No breaches'}
+  ];
+  document.getElementById('insightCards').innerHTML = items.map(i=>
+    `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value" style="font-size:20px;">${i.value}</div><div class="sub">${i.sub}</div></div>`
+  ).join('');
+  return ins;
+}
+
+function renderSLACards(rows, stats){
+  const ins = computeInsights(rows, stats);
+  const items = [
+    {label:'Open & unresolved', value: stats.inProgress + stats.ongoing, cls:'c-gold', sub:'In Progress / Ongoing'},
+    {label:'Open & overdue', value: stats.overdue, cls:'c-red', sub:'Past SLA target, still open'},
+    {label:'Closed late', value: stats.breached, cls:'c-red', sub:'Missed target before closing'},
+    {label:'Top delay reason', value: ins.topTag || '—', cls:'c-purple', sub: ins.topTag ? (ins.topTagN+' occurrences') : '—'}
+  ];
+  document.getElementById('slaCards').innerHTML = items.map(i=>
+    `<div class="card ${i.cls}"><div class="label">${i.label}</div><div class="value" style="font-size:20px;">${i.value}</div><div class="sub">${i.sub}</div></div>`
+  ).join('');
+}
+
+function renderBreakdownTables(rows){
+  const byPriority = groupBy(rows, 'priority');
+  const byCategory = groupBy(rows, 'category');
+  const byRequester = groupBy(rows, 'requester');
+
+  const pHtml = ['<tr><th>Priority</th><th>Count</th><th>Closed</th><th>SLA Met %</th></tr>']
+    .concat(byPriority.map(p=>`<tr><td>${p.label}</td><td>${p.total}</td><td>${p.closed}</td><td>${fmtPct(p.slaCompliancePct)}</td></tr>`)).join('');
+  document.getElementById('tblPriority').innerHTML = pHtml;
+
+  const cHtml = ['<tr><th>Category</th><th>Count</th><th>SLA Met</th></tr>']
+    .concat(byCategory.map(c=>`<tr><td>${c.label}</td><td>${c.total}</td><td>${c.met} / ${c.closedDecided}</td></tr>`)).join('');
+  document.getElementById('tblCategory').innerHTML = cHtml;
+
+  const rHtml = ['<tr><th>Requester</th><th>Requests</th><th>Closed</th><th>SLA Met</th></tr>']
+    .concat(byRequester.map(r=>`<tr><td>${r.label}</td><td>${r.total}</td><td>${r.closed}</td><td>${fmtPct(r.slaCompliancePct)}</td></tr>`)).join('');
+  document.getElementById('tblRequester').innerHTML = rHtml;
+
+  return { byPriority, byCategory, byRequester };
+}
+
+function makeChart(id, config){
+  if(charts[id]) charts[id].destroy();
+  const ctx = document.getElementById(id);
+  if(!ctx) return;
+  charts[id] = new Chart(ctx, config);
+}
+
+function tally(rows, field){
+  const map = {};
+  rows.forEach(r=>{
+    const v = (r[field]||'Unspecified').trim() || 'Unspecified';
+    map[v] = (map[v]||0)+1;
+  });
+  return map;
+}
+
+function renderCharts(rows, groups){
+  // Status breakdown
+  const statusMap = tally(rows, 'status');
+  makeChart('chartStatus', {
+    type:'bar',
+    data:{ labels:Object.keys(statusMap), datasets:[{ data:Object.values(statusMap), backgroundColor:PALETTE, borderRadius:6, maxBarThickness:46 }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, ticks:{precision:0}, grid:{color:'#1e2340'}} } }
+  });
+
+  // Priority mix (computed live from Tracker rows)
+  const pLabels = groups.byPriority.map(p=>p.label);
+  const pVals = groups.byPriority.map(p=>p.total);
+  makeChart('chartPriority', {
+    type:'doughnut',
+    data:{ labels:pLabels, datasets:[{ data:pVals, backgroundColor:PALETTE, borderColor:'#111428', borderWidth:3 }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom', labels:{boxWidth:10, font:{size:11}}}} }
+  });
+
+  // Category (computed live from Tracker rows)
+  const cLabels = groups.byCategory.map(c=>c.label);
+  const cVals = groups.byCategory.map(c=>c.total);
+  makeChart('chartCategory', {
+    type:'bar',
+    data:{ labels:cLabels, datasets:[{ data:cVals, backgroundColor:'#60a5fa', borderRadius:6, maxBarThickness:22 }]},
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{beginAtZero:true, ticks:{precision:0}, grid:{color:'#1e2340'}}, y:{grid:{display:false}, ticks:{font:{size:11}}} } }
+  });
+
+  // Trend by month
+  const months = {};
+  rows.forEach(r=>{
+    const rd = parseDDMMYYYY(r.received);
+    if(rd){ const k = rd.getFullYear()+'-'+String(rd.getMonth()+1).padStart(2,'0'); months[k] = months[k] || {received:0, completed:0}; months[k].received++; }
+    const cd = parseDDMMYYYY(r.completed);
+    if(cd){ const k = cd.getFullYear()+'-'+String(cd.getMonth()+1).padStart(2,'0'); months[k] = months[k] || {received:0, completed:0}; months[k].completed++; }
+  });
+  const monthKeys = Object.keys(months).sort();
+  const monthLbls = monthKeys.map(k=>{
+    const [y,m] = k.split('-');
+    return new Date(+y, +m-1, 1).toLocaleDateString(undefined,{month:'short', year:'2-digit'});
+  });
+  makeChart('chartTrend', {
+    type:'line',
+    data:{ labels: monthLbls, datasets:[
+      { label:'Received', data: monthKeys.map(k=>months[k].received), borderColor:'#60a5fa', backgroundColor:'rgba(96,165,250,.15)', tension:.35, fill:true },
+      { label:'Completed', data: monthKeys.map(k=>months[k].completed), borderColor:'#34d399', backgroundColor:'rgba(52,211,153,.15)', tension:.35, fill:true }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom', labels:{boxWidth:10,font:{size:11}}}},
+      scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, ticks:{precision:0}, grid:{color:'#1e2340'}} } }
+  });
+
+  // Delay tag chart (scoped to requests our SLA engine flags as breached/overdue)
+  const ins = computeInsights(rows);
+  const tagEntries = Object.entries(ins.tagCount).sort((a,b)=>b[1]-a[1]);
+  makeChart('chartDelay', {
+    type:'bar',
+    data:{ labels: tagEntries.map(e=>e[0]), datasets:[{ data: tagEntries.map(e=>e[1]), backgroundColor:'#f87171', borderRadius:6, maxBarThickness:26 }]},
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{beginAtZero:true, ticks:{precision:0}, grid:{color:'#1e2340'}}, y:{grid:{display:false}, ticks:{font:{size:11}}} } }
+  });
+}
+
+function priorityPill(p){
+  const map = {critical:'pill-red', high:'pill-gold', medium:'pill-blue', low:'pill-gray'};
+  const cls = map[(p||'').toLowerCase()] || 'pill-gray';
+  return gridjs.html(`<span class="pill ${cls}">${p||'—'}</span>`);
+}
+function statusPill(s){
+  const map = {closed:'pill-green', 'in progress':'pill-gold', ongoing:'pill-blue'};
+  const cls = map[(s||'').toLowerCase()] || 'pill-gray';
+  return gridjs.html(`<span class="pill ${cls}">${s||'—'}</span>`);
+}
+function slaPill(state){
+  const cls = { met:'pill-green', breached:'pill-red', 'on-track':'pill-blue', overdue:'pill-red', na:'pill-gray' }[state] || 'pill-gray';
+  return gridjs.html(`<span class="pill ${cls}">${slaStateLabel(state)}</span>`);
+}
+
+function toGridRows(rows){
+  return rows.map(r=>[r.id, r.requester, r.category, r.description, r.priority, r.status, r.received, r.completed, r.daysToComplete||'—', r.slaTarget, r._slaState||'na', r.delayTag||'—']);
+}
+
+function renderTrackerGrid(rows){
+  const el = document.getElementById('trackerGrid');
+  el.innerHTML = '';
+  grid = new gridjs.Grid({
+    columns: [
+      'ID','Requester','Category','Description',
+      {name:'Priority', formatter: (cell)=>priorityPill(cell)},
+      {name:'Status', formatter:(cell)=>statusPill(cell)},
+      'Received','Completed','Days',
+      'SLA Target',
+      {name:'SLA Status', formatter:(cell)=>slaPill(cell)},
+      'Delay Tag'
+    ],
+    data: toGridRows(rows),
+    search:true, sort:true, resizable:true,
+    pagination:{limit:12},
+    className:{ table:'gridjs-table' }
+  }).render(el);
+}
+
+function renderSLAGrid(rows){
+  // Computed live: closed requests that ran over their target, plus open requests
+  // already past their target as of today -- both driven by slaStateForRow(), not
+  // the sheet's raw "Within SLA?" text.
+  const risk = rows.filter(r => r._slaState==='breached' || r._slaState==='overdue');
+  const el = document.getElementById('slaGrid');
+  el.innerHTML = '';
+  slaGridInstance = new gridjs.Grid({
+    columns:[
+      'ID','Requester','Category',
+      {name:'Priority', formatter:(cell)=>priorityPill(cell)},
+      {name:'Status', formatter:(cell)=>statusPill(cell)},
+      'Received', 'Days to Complete', 'SLA Target',
+      {name:'SLA Status', formatter:(cell)=>slaPill(cell)},
+      'Delay Tag'
+    ],
+    data: risk.map(r=>[r.id, r.requester, r.category, r.priority, r.status, r.received, r.daysToComplete||'—', r.slaTarget, r._slaState, r.delayTag||'—']),
+    search:true, sort:true,
+    pagination:{limit:10},
+  }).render(el);
+}
+
+function populateFilterOptions(rows){
+  function fill(id, values){
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = sel.options[0].outerHTML + values.map(v=>`<option value="${v}">${v}</option>`).join('');
+    sel.value = current && values.includes(current) ? current : '';
+  }
+  fill('f-requester', [...new Set(rows.map(r=>r.requester).filter(Boolean))].sort());
+  fill('f-priority', [...new Set(rows.map(r=>r.priority).filter(Boolean))].sort());
+  fill('f-category', [...new Set(rows.map(r=>r.category).filter(Boolean))].sort());
+  fill('f-status', [...new Set(rows.map(r=>r.status).filter(Boolean))].sort());
+}
+
+function getFilteredRows(){
+  const req = document.getElementById('f-requester').value;
+  const pri = document.getElementById('f-priority').value;
+  const cat = document.getElementById('f-category').value;
+  const sta = document.getElementById('f-status').value;
+  const range = document.getElementById('f-daterange').value;
+  const now = new Date();
+  return ALL_ROWS.filter(r=>{
+    if(req && r.requester !== req) return false;
+    if(pri && r.priority !== pri) return false;
+    if(cat && r.category !== cat) return false;
+    if(sta && r.status !== sta) return false;
+    if(range !== 'all'){
+      const d = parseDDMMYYYY(r.received);
+      if(!d) return false;
+      const diff = daysBetween(d, now);
+      if(diff > +range || diff < 0) return false;
+    }
+    return true;
+  });
+}
+
+function rerenderFiltered(){
+  const rows = getFilteredRows();
+  // computeStats() tags every row with r._slaState -- run it first so every
+  // downstream renderer (grids, charts, insight cards) sees the same computed state.
+  const stats = renderKPICards(rows);
+  const groups = renderBreakdownTables(rows);
+  renderInsightCards(rows, stats);
+  renderSLACards(rows, stats);
+  renderCharts(rows, groups);
+  renderTrackerGrid(rows);
+  renderSLAGrid(rows);
+}
+
+function attachFilterListeners(){
+  ['f-requester','f-priority','f-category','f-status','f-daterange'].forEach(id=>{
+    document.getElementById(id).addEventListener('change', rerenderFiltered);
+  });
+}
+
+function attachTabs(){
+  document.querySelectorAll('.nav-item').forEach(item=>{
+    item.addEventListener('click', ()=>{
+      document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+      item.classList.add('active');
+      const tab = item.dataset.tab;
+      document.querySelectorAll('.tab-content').forEach(tc=>tc.classList.remove('active'));
+      document.getElementById('tab-'+tab).classList.add('active');
+    });
+  });
+}
+
+function showError(msg){
+  document.getElementById('errorHost').innerHTML =
+    `<div class="error-banner"><span>⚠ ${msg}</span><button class="btn" onclick="loadAll()">Retry</button></div>`;
+}
+function clearError(){ document.getElementById('errorHost').innerHTML = ''; }
+
+async function loadAll(){
+  document.getElementById('loadingHost').style.display = 'flex';
+  document.getElementById('content').style.display = 'none';
+  clearError();
+  try{
+    const parsed = await fetchLiveData();
+    ALL_ROWS = parsed.realRows;
+
+    populateFilterOptions(ALL_ROWS);
+    rerenderFiltered();
+
+    document.getElementById('meta-text').textContent =
+      'Live · synced ' + new Date().toLocaleString(undefined,{hour:'2-digit',minute:'2-digit',month:'short',day:'numeric'});
+    document.getElementById('loadingHost').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  }catch(err){
+    document.getElementById('loadingHost').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+    showError('Could not load live data from Google Sheets: ' + (err && err.message ? err.message : err));
+    document.getElementById('meta-text').textContent = 'Connection error';
+  }
+}
+
+document.getElementById('refreshBtn').addEventListener('click', loadAll);
+attachFilterListeners();
+attachTabs();
+loadAll();
+</script>
+</body>
+</html>
